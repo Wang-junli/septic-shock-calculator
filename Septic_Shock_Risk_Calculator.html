@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Septic Shock Risk Calculator</title>
+<style>
+  body {
+    margin: 0;
+    padding: 20px;
+    background: #ffffff;
+    color: #000000;
+    font-family: "Times New Roman", Times, serif;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  .container { max-width: 720px; margin: 0 auto; }
+  h1 {
+    font-size: 22px;
+    font-weight: bold;
+    text-align: center;
+    margin: 10px 0 20px;
+  }
+  table.form {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0;
+  }
+  table.form th, table.form td {
+    border: 1px solid #000;
+    padding: 6px 10px;
+    text-align: left;
+    font-weight: normal;
+  }
+  table.form th { background: #f0f0f0; }
+  table.form input {
+    width: 130px;
+    padding: 4px 6px;
+    font-size: 15px;
+    font-family: "Times New Roman", Times, serif;
+    border: 1px solid #000;
+  }
+  .btn-row { margin: 12px 0; }
+  button {
+    padding: 6px 24px;
+    font-size: 15px;
+    font-family: "Times New Roman", Times, serif;
+    border: 1px solid #000;
+    background: #fff;
+    cursor: pointer;
+    margin-right: 12px;
+  }
+  button:hover { background: #eee; }
+  .result {
+    display: none;
+    margin-top: 16px;
+    border: 1px solid #000;
+    padding: 10px 14px;
+  }
+  .result .big {
+    font-size: 32px;
+    font-weight: bold;
+    margin: 4px 0;
+  }
+  .formula {
+    margin-top: 14px;
+    border: 1px solid #999;
+    padding: 8px 12px;
+    font-size: 14px;
+  }
+  .note {
+    margin-top: 20px;
+    font-size: 13px;
+    border-top: 1px solid #999;
+    padding-top: 8px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Septic Shock Risk Calculator</h1>
+
+  <table class="form">
+    <tr><th>Systolic blood pressure (SBP, mmHg)</th><td><input type="number" id="adm_SBP" step="1" value=""></td></tr>
+    <tr><th>Diastolic blood pressure (DBP, mmHg)</th><td><input type="number" id="adm_DBP" step="1" value=""></td></tr>
+    <tr><th>Cholinesterase (CHE, kU/L; 1 kU/L = 10&sup3; U/L)</th><td><input type="number" id="lab_CHE" step="0.01" value=""></td></tr>
+    <tr><th>Interleukin-6 (IL-6, pg/mL)</th><td><input type="number" id="lab_IL6" step="0.01" value=""></td></tr>
+    <tr><th>Procalcitonin (PCT, ng/mL)</th><td><input type="number" id="lab_PCT" step="0.01" value=""></td></tr>
+    <tr><th>Urea (mmol/L)</th><td><input type="number" id="lab_Urea" step="0.01" value=""></td></tr>
+  </table>
+
+  <div class="btn-row">
+    <button onclick="calculate()">Calculate risk</button>
+    <button onclick="resetForm()">Reset</button>
+  </div>
+
+  <div class="result" id="result">
+    <div>Predicted probability of septic shock</div>
+    <div class="big" id="probValue">&mdash;</div>
+    <div>Risk category: <b id="riskLevel">&mdash;</b></div>
+    <div id="riskDesc">&mdash;</div>
+  </div>
+
+  <div class="formula">
+    <b>Model formula</b><br>
+    logit = 2.2048 &minus; 0.0214 &times; SBP &minus; 0.0225 &times; DBP &minus; 0.2075 &times; CHE + 0.0005 &times; IL-6 + 0.1189 &times; PCT + 0.1491 &times; Urea<br>
+    p = 1 / (1 + e<sup>&minus;logit</sup>)
+  </div>
+
+  <div class="note">
+    For research reference only and not a substitute for clinical judgment. The model was developed on single-center retrospective data and has not been externally validated. All calculations are performed locally in your browser; no data are uploaded to any server.
+  </div>
+
+</div>
+
+<script>
+  // Model coefficients: logistic regression refit on raw-scale values in the training set (n = 656)
+  var COEF = {
+    intercept: 2.204780755157507,
+    adm_DBP: -0.022528123844803204,
+    adm_SBP: -0.02136282725564015,
+    lab_CHE: -0.2074920039083866,
+    lab_IL6: 0.0004927325539487513,
+    lab_PCT: 0.11892126655125192,
+    lab_Urea: 0.14910455044919502
+  };
+  // High-risk cutoff: optimal Youden index in the validation set, p = 0.162 (sensitivity 0.900, specificity 0.652)
+  var THRESHOLD = 0.162;
+
+  function getVal(id) {
+    var v = parseFloat(document.getElementById(id).value);
+    return isNaN(v) ? null : v;
+  }
+
+  function calculate() {
+    var fields = [
+      ['adm_SBP', 'Systolic blood pressure (SBP)'],
+      ['adm_DBP', 'Diastolic blood pressure (DBP)'],
+      ['lab_CHE', 'Cholinesterase (CHE)'],
+      ['lab_IL6', 'Interleukin-6 (IL-6)'],
+      ['lab_PCT', 'Procalcitonin (PCT)'],
+      ['lab_Urea', 'Urea']
+    ];
+    var vals = {};
+    for (var i = 0; i < fields.length; i++) {
+      var id = fields[i][0];
+      var name = fields[i][1];
+      var v = getVal(id);
+      if (v === null || v < 0) {
+        alert('Please enter all six predictors (' + name + ' is missing or invalid).');
+        return;
+      }
+      vals[id] = v;
+    }
+
+    var logit = COEF.intercept
+      + COEF.adm_DBP * vals.adm_DBP
+      + COEF.adm_SBP * vals.adm_SBP
+      + COEF.lab_CHE * vals.lab_CHE
+      + COEF.lab_IL6 * vals.lab_IL6
+      + COEF.lab_PCT * vals.lab_PCT
+      + COEF.lab_Urea * vals.lab_Urea;
+
+    var p = 1 / (1 + Math.exp(-logit));
+    var pct = (p * 100).toFixed(1);
+
+    document.getElementById('probValue').textContent = pct + '%';
+
+    var level, desc;
+    if (p >= THRESHOLD) {
+      level = 'High risk';
+      desc = 'Predicted probability \u2265 ' + (THRESHOLD * 100).toFixed(1) + '% (optimal Youden cutoff). In the whole cohort, the septic shock rate was approximately 47.0% in the high-risk band; enhanced monitoring of circulatory status is recommended.';
+    } else {
+      level = 'Non-high risk';
+      desc = 'Predicted probability < ' + (THRESHOLD * 100).toFixed(1) + '% (optimal Youden cutoff). In the whole cohort, the septic shock rate was approximately 6.2% in the non-high-risk band.';
+    }
+    document.getElementById('riskLevel').textContent = level;
+    document.getElementById('riskDesc').textContent = desc;
+    document.getElementById('result').style.display = 'block';
+  }
+
+  function resetForm() {
+    var ids = ['adm_SBP', 'adm_DBP', 'lab_CHE', 'lab_IL6', 'lab_PCT', 'lab_Urea'];
+    for (var i = 0; i < ids.length; i++) {
+      document.getElementById(ids[i]).value = '';
+    }
+    document.getElementById('result').style.display = 'none';
+  }
+</script>
+
+</body>
+</html>
